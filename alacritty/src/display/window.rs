@@ -25,7 +25,7 @@ use {
     png::Decoder,
 };
 
-use std::fmt::{self, Display, Formatter};
+use std::{fmt::{self, Display, Formatter}};
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -267,6 +267,11 @@ impl Window {
             wayland_surface,
             scale_factor,
         })
+    }
+
+    #[inline]
+    pub fn context(&self)->&WindowedContext<PossiblyCurrent>{
+        self.windowed_context.get()
     }
 
     #[inline]

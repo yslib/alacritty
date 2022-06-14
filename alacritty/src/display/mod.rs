@@ -1,7 +1,9 @@
 //! The display subsystem including window management, font rasterization, and
 //! GPU drawing.
 
+use std::cell::RefCell;
 use std::fmt::{self, Formatter};
+use std::rc::Rc;
 #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
 use std::sync::atomic::Ordering;
 use std::{cmp, mem};
@@ -49,6 +51,8 @@ use crate::event::{Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
 use crate::renderer::rects::{RenderLines, RenderRect};
 use crate::renderer::{self, GlyphCache, Renderer};
+
+use neovideo_vlc::vlcvideo::*;
 
 pub mod content;
 pub mod cursor;
@@ -368,6 +372,10 @@ pub struct Display {
     renderer: Renderer,
     glyph_cache: GlyphCache,
     meter: Meter,
+
+    /// VLC video renderer
+    video_decoder: Rc<RefCell<VLCVideo>>,
+    video_renderer: TextureRender,
 }
 
 /// Pending renderer updates.
@@ -423,7 +431,7 @@ impl Display {
         debug!("Estimated cell size: {} x {}", cell_width, cell_height);
 
         // Spawn the Alacritty window.
-        let window = Window::new(
+        let mut window = Window::new(
             event_loop,
             config,
             identity,
@@ -431,6 +439,15 @@ impl Display {
             #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
             wayland_event_queue,
         )?;
+
+        // Create video decoder and renderer
+        let video_decoder = Rc::new(RefCell::new(VLCVideo::new(window.context(), event_loop)));
+        video_decoder
+            .borrow_mut()
+            .play_media("file:///D:\\movie\\matrix\\matrix.mkv")
+            .unwrap();
+        window.make_current();
+        let video_renderer = TextureRender::new(window.context());
 
         // Create renderer.
         let mut renderer = Renderer::new()?;
@@ -540,6 +557,8 @@ impl Display {
             is_damage_supported,
             debug_damage,
             damage_rects,
+            video_decoder,
+            video_renderer,
         })
     }
 
@@ -763,6 +782,9 @@ impl Display {
             self.update_damage(&mut terminal, selection_range, search_state);
         }
 
+        let mut update:bool = false;
+        let tex = self.video_decoder.borrow_mut().get_video_frame(&mut update);
+
         // Drop terminal as early as possible to free lock.
         drop(terminal);
 
@@ -770,6 +792,9 @@ impl Display {
         self.window.make_current();
 
         self.renderer.clear(background_color, config.window_opacity());
+        self.video_renderer.draw_video_frame(tex);
+
+
         let mut lines = RenderLines::new();
 
         // Draw grid.
@@ -803,6 +828,8 @@ impl Display {
             );
         }
 
+
+
         let mut rects = lines.rects(&metrics, &size_info);
 
         if let Some(vi_mode_cursor) = vi_mode_cursor {
@@ -822,6 +849,7 @@ impl Display {
         for rect in cursor.rects(&size_info, config.terminal_config.cursor.thickness()) {
             rects.push(rect);
         }
+
 
         // Push visual bell after url/underline/strikeout rects.
         let visual_bell_intensity = self.visual_bell.intensity();
@@ -870,6 +898,8 @@ impl Display {
                 let point = Point::new(start_line + i, Column(0));
                 self.renderer.draw_string(point, fg, bg, message_text, &size_info, glyph_cache);
             }
+
+
         } else {
             // Draw rectangles.
             self.renderer.draw_rects(&size_info, &metrics, rects);
@@ -897,6 +927,7 @@ impl Display {
             None => cursor_point,
         };
 
+
         // Update IME position.
         self.window.update_ime_position(ime_position, &self.size_info);
 
@@ -904,6 +935,8 @@ impl Display {
         // `commit`, which is done by swap buffers under the hood.
         #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
         self.request_frame(&self.window);
+
+
 
         // Clearing debug highlights from the previous frame requires full redraw.
         if self.is_damage_supported && !self.debug_damage {
@@ -919,8 +952,9 @@ impl Display {
             // permanent one frame delay.
             self.renderer.finish();
         }
-
         self.damage_rects.clear();
+
+        // self.window.request_redraw();
     }
 
     /// Update to a new configuration.
