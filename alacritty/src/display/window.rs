@@ -43,6 +43,8 @@ use crate::config::window::{Decorations, Identity, WindowConfig};
 use crate::config::UiConfig;
 use crate::display::SizeInfo;
 
+use window_vibrancy::{apply_acrylic, clear_acrylic};
+
 /// Window icon for `_NET_WM_ICON` property.
 #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
 static WINDOW_ICON: &[u8] = include_bytes!("../../extra/logo/compat/alacritty-term.png");
@@ -186,6 +188,13 @@ impl Window {
 
         #[cfg(target_os = "macos")]
         use_srgb_color_space(&window);
+
+        #[cfg(target_os = "windows")]
+        if config.window.blur {
+            if apply_acrylic(&window, None).is_err() {
+                log::info!("blur not support on windows");
+            }
+        }
 
         let scale_factor = window.scale_factor();
         log::info!("Window scale factor: {}", scale_factor);
@@ -346,6 +355,16 @@ impl Window {
     }
 
     pub fn set_blur(&self, blur: bool) {
+        #[cfg(target_os = "windows")]
+        if blur {
+            if apply_acrylic(&self.window, None).is_err() {
+                log::info!("blur not support on windows");
+            }
+        } else {
+            if clear_acrylic(&self.window).is_err() {
+                log::info!("blur not support on windows");
+            }
+        }
         self.window.set_blur(blur);
     }
 
